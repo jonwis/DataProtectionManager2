@@ -15,7 +15,37 @@ wil::com_ptr<IStream> create_mem_stream()
     return output;
 }
 
-void TestNtdllEncryption()
+void compare_stream_content(IStream* left, IStream* right)
+{
+    // Read chunks from the two streams and compare them
+    wil::stream_set_position(left, 0);
+    wil::stream_set_position(right, 0);
+
+    while (true)
+    {
+        std::array<uint8_t, 4096> leftData;
+        std::array<uint8_t, 4096> rightData;
+
+        auto leftRead = wil::stream_read_partial(left, leftData.data(), 4096);
+        auto rightRead = wil::stream_read_partial(right, rightData.data(), 4096);
+
+        if (leftRead != rightRead)
+        {
+            printf("Clear = %d, File = %d\n", leftRead, rightRead);
+            return;
+        }
+        else if (memcmp(leftData.data(), rightData.data(), leftRead) != 0)
+        {
+            printf("Mismatch in content\n");
+            return;
+        }
+
+        if (leftRead == 0)
+            break;
+    }
+}
+
+void TestBinaryStreamEncryption()
 {
     DataProtectionProvider scuffles;
 
@@ -40,44 +70,22 @@ void TestNtdllEncryption()
         reader->finish();
     }
 
-    // Read chunks from the file stream and the clear stream, they should be identical
-    wil::stream_set_position(clearStream.get(), 0);
-    wil::stream_set_position(fileStream.get(), 0);
-
-    while (true)
-    {
-        std::array<uint8_t, 4096> clear;
-        std::array<uint8_t, 4096> file;
-
-        auto clearRead = wil::stream_read_partial(clearStream.get(), clear.data(), 4096);
-        auto fileRead = wil::stream_read_partial(fileStream.get(), file.data(), 4096);
-
-        if (clearRead != fileRead)
-        {
-            printf("Clear = %d, File = %d\n", clearRead, fileRead);
-            return;
-        }
-        else if (memcmp(clear.data(), file.data(), clearRead) != 0)
-        {
-            printf("Mismatch in content\n");
-            return;
-        }
-
-        if (clearRead == 0)
-            break;
-    }
+    compare_stream_content(clearStream.get(), fileStream.get());
 }
 
 void TestBufferProtection()
 {
     DataProtectionProvider scuffles;
     uint8_t data[] = "scuffles the fluffy kitten";
-    auto output = scuffles.ProtectBuffer(data);
-    for (auto c : output.as_span<uint8_t>())
+    auto roundTrip = scuffles.UnprotectBuffer(scuffles.ProtectBuffer(data).as_span<uint8_t>());
+    if (roundTrip.size() != sizeof(data))
     {
-        printf("%02lx, ", c);
+        printf("Size mismatch, %zd vs %d\n", sizeof(data), roundTrip.size());
     }
-    printf("\n");
+    else if (memcmp(roundTrip.data(), data, sizeof(data)) != 0)
+    {
+        printf("Content mismatch\n");
+    }
 }
 
 DataProtectionBuffer DeprotectFileToBuffer(std::filesystem::path const& path, DataProtectionProvider& provider)
@@ -100,7 +108,7 @@ void ProtectBufferToFile(std::span<uint8_t const> data, std::filesystem::path co
     auto buffer = provider.ProtectBuffer(data);
     wil::unique_hfile file{ ::CreateFile(path.c_str(), FILE_GENERIC_WRITE, 0, nullptr, CREATE_NEW, 0, nullptr) };
     THROW_IF_WIN32_BOOL_FALSE(::WriteFile(file.get(), buffer.data(), static_cast<DWORD>(buffer.size()), nullptr, nullptr));
-    THROW_IF_WIN32_BOOL_FALSE(::SetEndOfFile(file.get()))
+    THROW_IF_WIN32_BOOL_FALSE(::SetEndOfFile(file.get()));
 }
 
 void TestImageStreamTranscode()
@@ -114,9 +122,8 @@ void TestImageStreamTranscode()
     picker.as<::IInitializeWithWindow>()->Initialize(::GetConsoleWindow());
     picker.FileTypeFilter().Append(L".jpg");
     auto f = picker.PickSingleFileAsync().get();
-    auto p = f.Path();
     wil::com_ptr<::IWICBitmapDecoder> fileDecoder;
-    THROW_IF_FAILED(wicFactory->CreateDecoderFromFilename(p.c_str(), nullptr, GENERIC_READ, WICDecodeOptions{}, &fileDecoder));
+    THROW_IF_FAILED(wicFactory->CreateDecoderFromFilename(f.Path().c_str(), nullptr, GENERIC_READ, WICDecodeOptions{}, &fileDecoder));
     wil::com_ptr<::IWICBitmapFrameDecode> frameDecode;
     THROW_IF_FAILED(fileDecoder->GetFrame(0, &frameDecode));
 
@@ -181,6 +188,6 @@ int main()
     init_apartment();
  
     TestBufferProtection();
-    TestNtdllEncryption();
+    TestBinaryStreamEncryption();
     TestImageStreamTranscode();
 }
