@@ -124,7 +124,7 @@
   <ItemGroup>
     <None Include="packages.config" />
     <None Include="PropertySheet.props" />
-    <Text Include="readme.txt">
+    <Text Include="readme.md">
       <DeploymentContent>false</DeploymentContent>
     </Text>
   </ItemGroup>
