@@ -6,6 +6,27 @@ types. Under the covers, `DataProtectionProvider` passes buffers and streams thr
 `NCryptProtect...` methods.  Using the Win32 APIs directly reduces async threading cost and makes
 a write-through-filter available for producing a protected stream directly.
 
+## DecryptionReadStream
+
+Wraps `NCryptStreamOpenToUnprotect` into a C++ type with helper methods. It is-an `IStream` that
+supports reading from a stream containing ciphertext and producing cleartext. Most of the other
+IStream methods are not implemented. The source stream should have been created with
+`CreateEncryptionStreamWriter` or generally `NCryptStreamOpenToProtect`.
+
+```c++
+// Open a file stream containing protected content, and wrap it in a decryption stream. Pass it
+// to the WIC imaging APIs to decode the image as a jpeg.
+wil::com_ptr<IStream> fileStream = open_stream_on_file(...);
+wil::com_ptr<IStream> winrt::make<DecryptionReadStream>(fileStream.get());
+
+auto wicFactory = winrt::create_instance<IWICImagingFactory>(CLSID_WICImagingFactory);
+wil::com_ptr<IWICBitmapDecoder> decoder;
+wil::com_ptr<IWICBitmapFrameDecode> frame;
+winrt::check_hresut(wicFactory->CreateDecoderFromStream(decryptionStream.get(), nullptr, WICDecodeMetadataCacheOnDemand, decoder.put()));
+winrt::check_hresult(decoder->GetFrame(0, frame.put()));
+winrt::check_hresult(frame->GetSize(&width, &height));
+```
+
 ## DataProtectionProvider
 
 Wraps `NCryptCreateProtectionDescriptor` into a C++ type with helper methods. Its constructor
@@ -89,18 +110,6 @@ If you are using these methods to produce files, consider using the file extensi
 decoding method to use.
 
 ## TODO
-
-### Read-through stream
-
-Provide a means to wrap a "decrypt on read" stream around a stream containing protected bytes, enabling
-this example:
-
-```c++
-wil::com_ptr<IStream> fileStream = open_stream_on_file(encryptedFile);
-DataProtectionProvider protector;
-auto reader = protector.CreateDecryptionStreamReader(fileStream.get());
-auto myThing = MyThing::DeserializeFromStream(memStream.get());
-```
 
 ### File output helpers
 
