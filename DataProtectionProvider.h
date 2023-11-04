@@ -38,8 +38,8 @@ private:
 
 struct DataProtectionStreamWriter : winrt::implements<DataProtectionStreamWriter, ::IStream, ::ISequentialStream>
 {
-    void encrypt_to_stream(NCRYPT_DESCRIPTOR_HANDLE descriptor, IStream* lower);
-    void decrypt_to_stream(IStream* lower);
+    DataProtectionStreamWriter(NCRYPT_DESCRIPTOR_HANDLE encryptionDescriptor, IStream* lower);
+    DataProtectionStreamWriter(IStream* lower);
     void finish();
 
 protected:
@@ -56,7 +56,9 @@ protected:
     STDMETHODIMP UnlockRegion(ULARGE_INTEGER, ULARGE_INTEGER, DWORD) noexcept override;
 
 private:
+    void ConfigureStreamInfo(IStream* lower);
     wil::com_ptr<::IStream> m_lower{ nullptr };
+    HRESULT m_writeError{ S_OK };
     NCRYPT_STREAM_HANDLE m_handle{ nullptr };
     NCRYPT_PROTECT_STREAM_INFO m_streamInfo{};
 };
@@ -65,22 +67,33 @@ struct DataProtectionProvider
 {
     DataProtectionProvider(std::wstring const& scope = L"LOCAL=user");
 
+    // Takes a buffer of cleartext data and returns an ecrypted buffer of data based on the protection
+    // scope specified in the constructor.
     DataProtectionBuffer ProtectBuffer(std::span<uint8_t const> data);
 
+    // Takes a buffer of encrypted data and returns a cleartext buffer after decrypting it. Note that
+    // protected buffers include their decryption scope. No error occurs if you attempt to decrypt a
+    // buffer that was not encrypted with the same scope as the current provider.
     DataProtectionBuffer UnprotectBuffer(std::span<uint8_t const> data);
 
     // Creates an encryption filter stream. Writing cleartext data into the writer
     // pushes encrypted data into the 'output' stream on the other side. Be sure
-    // to call "writer->Commit()" to complete the encryption operation. The returned
+    // to call "writer->finish()" to complete the encryption operation. The returned
     // stream object is-an IStream & ISequentialStream, suitable for passing to other
     // methods that write to it. Note that it is write-only; any attempt to read from
     // the stream or seek it will fail.
     winrt::com_ptr<DataProtectionStreamWriter> CreateEncryptionStreamWriter(::IStream* outputStream);
 
+    // Creates a decryption filter stream. Writing encrypted data into the writer
+    // pushes cleartext data into the 'output' stream on the other side. Be sure
+    // to call "writer->finish()" to complete the decryption operation. The returned
+    // stream object is-an IStream & ISequentialStream, suitable for passing to other
+    // methods that write to it. Note that it is write-only; any attempt to read from
+    // the stream or seek it will fail.
     winrt::com_ptr<DataProtectionStreamWriter> CreateDecryptionStreamWriter(::IStream* outputStream);
 
     ~DataProtectionProvider();
 
 private:
-    NCRYPT_DESCRIPTOR_HANDLE m_descriptor = nullptr;
+    NCRYPT_DESCRIPTOR_HANDLE m_descriptor{ nullptr };
 };

@@ -52,16 +52,12 @@ DataProtectionBuffer DataProtectionProvider::UnprotectBuffer(std::span<uint8_t c
 
 winrt::com_ptr<DataProtectionStreamWriter> DataProtectionProvider::CreateEncryptionStreamWriter(::IStream* outputStream)
 {
-    auto writer = winrt::make_self<DataProtectionStreamWriter>();
-    writer->encrypt_to_stream(m_descriptor, outputStream);
-    return writer;
+    return winrt::make_self<DataProtectionStreamWriter>(m_descriptor, outputStream);
 }
 
 winrt::com_ptr<DataProtectionStreamWriter> DataProtectionProvider::CreateDecryptionStreamWriter(::IStream* outputStream)
 {
-    auto writer = winrt::make_self<DataProtectionStreamWriter>();
-    writer->decrypt_to_stream(outputStream);
-    return writer;
+    return winrt::make_self<DataProtectionStreamWriter>(outputStream);
 }
 
 DataProtectionProvider::~DataProtectionProvider()
@@ -72,41 +68,36 @@ DataProtectionProvider::~DataProtectionProvider()
     }
 }
 
-void DataProtectionStreamWriter::encrypt_to_stream(NCRYPT_DESCRIPTOR_HANDLE descriptor, IStream* lower)
+DataProtectionStreamWriter::DataProtectionStreamWriter(NCRYPT_DESCRIPTOR_HANDLE encryptionDescriptor, IStream* lower)
 {
-    m_lower = lower;
-    m_streamInfo.pvCallbackCtxt = this;
-    m_streamInfo.pfnStreamOutput = [](void* context, BYTE const* data, SIZE_T size, BOOL) -> SECURITY_STATUS
-        {
-            auto self = static_cast<DataProtectionStreamWriter*>(context);
-            RETURN_IF_FAILED(wil::stream_write_nothrow(self->m_lower.get(), data, static_cast<ULONG>(size)));
-            return 0;
-        };
-
-    THROW_IF_WIN32_ERROR(::NCryptStreamOpenToProtect(descriptor, 0, nullptr, &m_streamInfo, &m_handle));
+    ConfigureStreamInfo(lower);
+    THROW_IF_WIN32_ERROR(::NCryptStreamOpenToProtect(encryptionDescriptor, 0, nullptr, &m_streamInfo, &m_handle));
 }
 
-void DataProtectionStreamWriter::decrypt_to_stream(IStream* lower)
+DataProtectionStreamWriter::DataProtectionStreamWriter(IStream* lower)
+{
+    ConfigureStreamInfo(lower);
+    THROW_IF_WIN32_ERROR(::NCryptStreamOpenToUnprotect(&m_streamInfo, 0, nullptr, &m_handle));
+}
+
+void DataProtectionStreamWriter::ConfigureStreamInfo(IStream* lower)
 {
     m_lower = lower;
     m_streamInfo.pvCallbackCtxt = this;
     m_streamInfo.pfnStreamOutput = [](void* context, BYTE const* data, SIZE_T size, BOOL) -> SECURITY_STATUS
         {
             auto self = static_cast<DataProtectionStreamWriter*>(context);
-            RETURN_IF_FAILED(wil::stream_write_nothrow(self->m_lower.get(), data, static_cast<ULONG>(size)));
+            RETURN_IF_FAILED(self->m_writeError = wil::stream_write_nothrow(self->m_lower.get(), data, static_cast<ULONG>(size)));
             return 0;
         };
-
-    THROW_IF_WIN32_ERROR(::NCryptStreamOpenToUnprotect(&m_streamInfo, 0, nullptr, &m_handle));
 }
 
 void DataProtectionStreamWriter::finish()
 {
-    if (m_handle)
+    if (auto h = std::exchange(m_handle, {}))
     {
-        THROW_IF_WIN32_ERROR(::NCryptStreamUpdate(m_handle, nullptr, 0, TRUE));
-        THROW_IF_WIN32_ERROR(::NCryptStreamClose(m_handle));
-        m_handle = nullptr;
+        THROW_IF_WIN32_ERROR(::NCryptStreamUpdate(h, nullptr, 0, TRUE));
+        THROW_IF_WIN32_ERROR(::NCryptStreamClose(h));
     }
 }
 
