@@ -18,9 +18,6 @@ wil::com_ptr<IStream> create_mem_stream()
 void compare_stream_content(IStream* left, IStream* right)
 {
     // Read chunks from the two streams and compare them
-    wil::stream_set_position(left, 0);
-    wil::stream_set_position(right, 0);
-
     while (true)
     {
         std::array<uint8_t, 4096> leftData;
@@ -70,6 +67,8 @@ void TestBinaryStreamEncryption()
         reader->finish();
     }
 
+    wil::stream_set_position(clearStream.get(), 0);
+    wil::stream_set_position(fileStream.get() , 0);
     compare_stream_content(clearStream.get(), fileStream.get());
 }
 
@@ -183,6 +182,30 @@ void TestImageStreamTranscode()
     // entire thing into memory you get a reasonable-size chunking model
 }
 
+void TestDecyptionReadStream()
+{
+    DataProtectionProvider scuffles;
+
+    // Open the current executable file as a stream, then read from it to produce an encrypted
+    // stream
+    auto filePath = wil::GetModuleFileNameW<std::wstring>(nullptr);
+    wil::com_ptr<IStream> fileStream;
+    THROW_IF_FAILED(::SHCreateStreamOnFileEx(filePath.c_str(), STGM_READ, 0, FALSE, nullptr, &fileStream));
+    auto encryptedStream = create_mem_stream();
+    {
+        auto writer = scuffles.CreateEncryptionStreamWriter(encryptedStream.get());
+        wil::stream_copy_all(fileStream.get(), writer.get());
+        writer->finish();
+    }
+
+    // Now wrap a DecryptionReadStream around the encryptedStream and read through it
+    // and compare against the orignal fileStream content
+    wil::stream_set_position(encryptedStream.get(), 0);
+    wil::stream_set_position(fileStream.get(), 0);
+    auto readStream = winrt::make_self<DecryptionReadStream>(encryptedStream.get());
+    compare_stream_content(readStream.get(), fileStream.get());
+}
+
 int main()
 {
     init_apartment();
@@ -190,4 +213,5 @@ int main()
     TestBufferProtection();
     TestBinaryStreamEncryption();
     TestImageStreamTranscode();
+    TestDecyptionReadStream();
 }

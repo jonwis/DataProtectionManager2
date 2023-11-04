@@ -120,6 +120,7 @@
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="DecryptionReadStream.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />

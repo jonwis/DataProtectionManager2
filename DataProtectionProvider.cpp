@@ -43,13 +43,6 @@ DataProtectionBuffer DataProtectionProvider::UnprotectBuffer(std::span<uint8_t c
     return { std::move(unprotectedData), unprotectedSize };
 }
 
-// Creates an encryption filter stream. Writing cleartext data into the writer
-// pushes encrypted data into the 'output' stream on the other side. Be sure
-// to call "writer->Commit()" to complete the encryption operation. The returned
-// stream object is-an IStream & ISequentialStream, suitable for passing to other
-// methods that write to it. Note that it is write-only; any attempt to read from
-// the stream or seek it will fail.
-
 winrt::com_ptr<DataProtectionStreamWriter> DataProtectionProvider::CreateEncryptionStreamWriter(::IStream* outputStream)
 {
     return winrt::make_self<DataProtectionStreamWriter>(m_descriptor, outputStream);
@@ -101,7 +94,7 @@ void DataProtectionStreamWriter::finish()
     }
 }
 
-STDMETHODIMP_(HRESULT __stdcall) DataProtectionStreamWriter::Write(void const* pv, ULONG size, ULONG* pcbWritten) noexcept
+STDMETHODIMP DataProtectionStreamWriter::Write(void const* pv, ULONG size, ULONG* pcbWritten) noexcept
 {
     RETURN_HR_IF(E_UNEXPECTED, !m_handle);
     RETURN_IF_WIN32_ERROR(::NCryptStreamUpdate(m_handle, reinterpret_cast<BYTE const*>(pv), size, FALSE));
@@ -109,58 +102,58 @@ STDMETHODIMP_(HRESULT __stdcall) DataProtectionStreamWriter::Write(void const* p
     return S_OK;
 }
 
-STDMETHODIMP_(HRESULT __stdcall) DataProtectionStreamWriter::Commit(ULONG) noexcept
-{
-    return S_OK;
-}
-
-STDMETHODIMP_(HRESULT __stdcall) DataProtectionStreamWriter::Read(void*, ULONG, ULONG* read) noexcept
+STDMETHODIMP DataProtectionStreamWriter::Read(void*, ULONG, ULONG* read) noexcept
 {
     *read = 0;
     return E_NOTIMPL;
 }
 
-STDMETHODIMP_(HRESULT __stdcall) DataProtectionStreamWriter::Revert() noexcept
+STDMETHODIMP DataProtectionStreamWriter::Commit(ULONG) noexcept
+{
+    return S_OK;
+}
+
+STDMETHODIMP DataProtectionStreamWriter::Revert() noexcept
 {
     return E_NOTIMPL;
 }
 
-STDMETHODIMP_(HRESULT __stdcall) DataProtectionStreamWriter::Seek(LARGE_INTEGER, DWORD, ULARGE_INTEGER* newPos) noexcept
+STDMETHODIMP DataProtectionStreamWriter::Seek(LARGE_INTEGER, DWORD, ULARGE_INTEGER* newPos) noexcept
 {
     wil::assign_to_opt_param(newPos, {});
     return E_NOTIMPL;
 }
 
-STDMETHODIMP_(HRESULT __stdcall) DataProtectionStreamWriter::SetSize(ULARGE_INTEGER) noexcept
+STDMETHODIMP DataProtectionStreamWriter::SetSize(ULARGE_INTEGER) noexcept
 {
     return E_NOTIMPL;
 }
 
-STDMETHODIMP_(HRESULT __stdcall) DataProtectionStreamWriter::CopyTo(::IStream*, ULARGE_INTEGER, ULARGE_INTEGER* read, ULARGE_INTEGER* written) noexcept
+STDMETHODIMP DataProtectionStreamWriter::CopyTo(::IStream*, ULARGE_INTEGER, ULARGE_INTEGER* read, ULARGE_INTEGER* written) noexcept
 {
     wil::assign_to_opt_param(read, {});
     wil::assign_to_opt_param(written, {});
     return E_NOTIMPL;
 }
 
-STDMETHODIMP_(HRESULT __stdcall) DataProtectionStreamWriter::Clone(IStream** result) noexcept
+STDMETHODIMP DataProtectionStreamWriter::Clone(IStream** result) noexcept
 {
     wil::assign_null_to_opt_param(result);
     return E_NOTIMPL;
 }
 
-STDMETHODIMP_(HRESULT __stdcall) DataProtectionStreamWriter::Stat(STATSTG* stats, DWORD) noexcept
+STDMETHODIMP DataProtectionStreamWriter::Stat(STATSTG* stats, DWORD) noexcept
 {
     *stats = {};
     return E_NOTIMPL;
 }
 
-STDMETHODIMP_(HRESULT __stdcall) DataProtectionStreamWriter::LockRegion(ULARGE_INTEGER, ULARGE_INTEGER, DWORD) noexcept
+STDMETHODIMP DataProtectionStreamWriter::LockRegion(ULARGE_INTEGER, ULARGE_INTEGER, DWORD) noexcept
 {
     return E_NOTIMPL;
 }
 
-STDMETHODIMP_(HRESULT __stdcall) DataProtectionStreamWriter::UnlockRegion(ULARGE_INTEGER, ULARGE_INTEGER, DWORD) noexcept
+STDMETHODIMP DataProtectionStreamWriter::UnlockRegion(ULARGE_INTEGER, ULARGE_INTEGER, DWORD) noexcept
 {
     return E_NOTIMPL;
 }

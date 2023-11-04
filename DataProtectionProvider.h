@@ -44,8 +44,8 @@ struct DataProtectionStreamWriter : winrt::implements<DataProtectionStreamWriter
 
 protected:
     STDMETHODIMP Write(void const* pv, ULONG size, ULONG* pcbWritten) noexcept override;
-    STDMETHODIMP Commit(ULONG) noexcept override;
     STDMETHODIMP Read(void*, ULONG, ULONG* read) noexcept override;
+    STDMETHODIMP Commit(ULONG) noexcept override;
     STDMETHODIMP Revert() noexcept override;
     STDMETHODIMP Seek(LARGE_INTEGER, DWORD, ULARGE_INTEGER* newPos) noexcept override;
     STDMETHODIMP SetSize(ULARGE_INTEGER) noexcept override;
@@ -96,4 +96,39 @@ struct DataProtectionProvider
 
 private:
     NCRYPT_DESCRIPTOR_HANDLE m_descriptor{ nullptr };
+};
+
+// Given an encrypted stream, this type will decrypt it on the fly as it is read. Note that
+// this type is forward-sequential-read-only and cannot be seek'd or written to. Many APIs that
+// take an IStream really only need ISequentialStream, so this type can be used in those cases.
+struct DecryptionReadStream : winrt::implements<DecryptionReadStream, IStream, ISequentialStream>
+{
+public:
+
+    DecryptionReadStream(IStream* encryptedSource);
+    ~DecryptionReadStream();
+
+protected:
+
+    STDMETHODIMP Read(void* pv, ULONG size, ULONG* read) noexcept override;
+    STDMETHODIMP Write(void const*, ULONG, ULONG* pcbWritten) noexcept override;
+    STDMETHODIMP Commit(ULONG) noexcept override;
+    STDMETHODIMP Revert() noexcept override;
+    STDMETHODIMP Seek(LARGE_INTEGER, DWORD, ULARGE_INTEGER* newPos) noexcept override;
+    STDMETHODIMP SetSize(ULARGE_INTEGER) noexcept override;
+    STDMETHODIMP CopyTo(::IStream*, ULARGE_INTEGER, ULARGE_INTEGER* read, ULARGE_INTEGER* written) noexcept override;
+    STDMETHODIMP Clone(IStream** result) noexcept override;
+    STDMETHODIMP Stat(STATSTG* stats, DWORD) noexcept override;
+    STDMETHODIMP LockRegion(ULARGE_INTEGER, ULARGE_INTEGER, DWORD) noexcept override;
+    STDMETHODIMP UnlockRegion(ULARGE_INTEGER, ULARGE_INTEGER, DWORD) noexcept override;
+
+private:
+    void EnsureAvailableBytes(size_t desiredSize);
+
+    bool m_finalBlockRead{ false };
+    std::vector<uint8_t> m_pendingData;
+    wil::com_ptr<IStream> m_source;
+    NCRYPT_STREAM_HANDLE m_streamHandle{ nullptr };
+    NCRYPT_PROTECT_STREAM_INFO m_streamInfo{};
+    std::array<uint8_t, 64 * 1024> m_sourceReadBuffer{};
 };
