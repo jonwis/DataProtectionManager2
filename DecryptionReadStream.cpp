@@ -27,6 +27,7 @@ STDMETHODIMP DecryptionReadStream::Read(void* pv, ULONG size, ULONG* read) noexc
     std::uninitialized_copy_n(m_pendingData.data(), toRead, static_cast<uint8_t*>(pv));
     m_pendingData.erase(m_pendingData.begin(), m_pendingData.begin() + toRead);
     wil::assign_to_opt_param(read, static_cast<ULONG>(toRead));
+    m_dataReadSoFar += toRead;
 
     return S_OK;
 }
@@ -65,7 +66,7 @@ void DecryptionReadStream::EnsureAvailableBytes(size_t desiredSize)
 STDMETHODIMP DecryptionReadStream::Write(void const*, ULONG, ULONG* pcbWritten) noexcept
 {
     wil::assign_to_opt_param(pcbWritten, 0ul);
-    return E_NOTIMPL;
+    RETURN_HR(E_NOTIMPL);
 }
 
 STDMETHODIMP DecryptionReadStream::Commit(ULONG) noexcept
@@ -75,45 +76,64 @@ STDMETHODIMP DecryptionReadStream::Commit(ULONG) noexcept
 
 STDMETHODIMP DecryptionReadStream::Revert() noexcept
 {
-    return E_NOTIMPL;
+    RETURN_HR(E_NOTIMPL);
 }
 
-STDMETHODIMP DecryptionReadStream::Seek(LARGE_INTEGER, DWORD, ULARGE_INTEGER* newPos) noexcept
+STDMETHODIMP DecryptionReadStream::Seek(LARGE_INTEGER offset, DWORD direction, ULARGE_INTEGER* newPos) noexcept
 {
     wil::assign_to_opt_param(newPos, {});
-    return E_NOTIMPL;
+
+    if (direction == STREAM_SEEK_CUR)
+    {
+        if (offset.QuadPart == 0)
+        {
+            ULARGE_INTEGER soFar;
+            soFar.QuadPart = m_dataReadSoFar;
+            wil::assign_to_opt_param(newPos, soFar);
+            return S_OK;
+        }
+    }
+    else if (direction == STREAM_SEEK_SET)
+    {
+        if ((offset.QuadPart == 0) && m_dataReadSoFar == 0)
+        {
+            return S_OK;
+        }
+    }
+
+    RETURN_HR(E_NOTIMPL);
 }
 
 STDMETHODIMP DecryptionReadStream::SetSize(ULARGE_INTEGER) noexcept
 {
-    return E_NOTIMPL;
+    RETURN_HR(E_NOTIMPL);
 }
 
 STDMETHODIMP DecryptionReadStream::CopyTo(::IStream*, ULARGE_INTEGER, ULARGE_INTEGER* read, ULARGE_INTEGER* written) noexcept
 {
     wil::assign_to_opt_param(read, {});
     wil::assign_to_opt_param(written, {});
-    return E_NOTIMPL;
+    RETURN_HR(E_NOTIMPL);
 }
 
 STDMETHODIMP DecryptionReadStream::Clone(IStream** result) noexcept
 {
     wil::assign_null_to_opt_param(result);
-    return E_NOTIMPL;
+    RETURN_HR(E_NOTIMPL);
 }
 
 STDMETHODIMP DecryptionReadStream::Stat(STATSTG* stats, DWORD) noexcept
 {
     *stats = {};
-    return E_NOTIMPL;
+    RETURN_HR(E_NOTIMPL);
 }
 
 STDMETHODIMP DecryptionReadStream::LockRegion(ULARGE_INTEGER, ULARGE_INTEGER, DWORD) noexcept
 {
-    return E_NOTIMPL;
+    RETURN_HR(E_NOTIMPL);
 }
 
 STDMETHODIMP DecryptionReadStream::UnlockRegion(ULARGE_INTEGER, ULARGE_INTEGER, DWORD) noexcept
 {
-    return E_NOTIMPL;
+    RETURN_HR(E_NOTIMPL);
 }

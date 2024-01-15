@@ -130,5 +130,6 @@ private:
     wil::com_ptr<IStream> m_source;
     NCRYPT_STREAM_HANDLE m_streamHandle{ nullptr };
     NCRYPT_PROTECT_STREAM_INFO m_streamInfo{};
+    uint64_t m_dataReadSoFar{ 0 };
     std::array<uint8_t, 64 * 1024> m_sourceReadBuffer{};
 };

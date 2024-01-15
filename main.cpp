@@ -110,6 +110,22 @@ void ProtectBufferToFile(std::span<uint8_t const> data, std::filesystem::path co
     THROW_IF_WIN32_BOOL_FALSE(::SetEndOfFile(file.get()));
 }
 
+winrt::hstring GetImageFilePath()
+{
+    static winrt::hstring s_imageFilePath;
+
+    if (s_imageFilePath.empty())
+    {
+        auto picker = FileOpenPicker();
+        picker.as<::IInitializeWithWindow>()->Initialize(::GetConsoleWindow());
+        picker.FileTypeFilter().Append(L".jpg");
+        auto file = picker.PickSingleFileAsync().get();
+        s_imageFilePath = file.Path();
+    }
+
+    return s_imageFilePath;
+}
+
 void TestImageStreamTranscode()
 {
     auto wicFactory = winrt::try_create_instance<::IWICImagingFactory>(CLSID_WICImagingFactory);
@@ -118,11 +134,8 @@ void TestImageStreamTranscode()
 
     // Pick a file, get a frame decoder for it, and decode the first frame
     winrt::Windows::Storage::Pickers::FileOpenPicker picker;
-    picker.as<::IInitializeWithWindow>()->Initialize(::GetConsoleWindow());
-    picker.FileTypeFilter().Append(L".jpg");
-    auto f = picker.PickSingleFileAsync().get();
     wil::com_ptr<::IWICBitmapDecoder> fileDecoder;
-    THROW_IF_FAILED(wicFactory->CreateDecoderFromFilename(f.Path().c_str(), nullptr, GENERIC_READ, WICDecodeOptions{}, &fileDecoder));
+    THROW_IF_FAILED(wicFactory->CreateDecoderFromFilename(GetImageFilePath().c_str(), nullptr, GENERIC_READ, WICDecodeOptions{}, &fileDecoder));
     wil::com_ptr<::IWICBitmapFrameDecode> frameDecode;
     THROW_IF_FAILED(fileDecoder->GetFrame(0, &frameDecode));
 
@@ -146,17 +159,12 @@ void TestImageStreamTranscode()
         pngEncrytpedWriter->finish();
     }
 
-    // ... and then let's see what's in the output stream
-    wil::stream_set_position(pngEncryptedStream.get(), 0);
-    printf("%I64x\n", wil::stream_size(pngEncryptedStream.get()));
-
     // Now we have an encrypted stream, say on a file, and we need to pass it through
-    // the decryption filter to produce cleartext. We don't have a way (yet) to make
-    // a "read through" filter, so we _push_ content back through the filter and pass
-    // that off to the decoder, temporarily creating a cleartext copy (boo.)
+    // the decryption filter to produce cleartext.
     auto pngClearText = create_mem_stream();
     {
         auto decoder = scuffles.CreateDecryptionStreamWriter(pngClearText.get());
+        wil::stream_set_position(pngEncryptedStream.get(), 0);
         wil::stream_copy_all(pngEncryptedStream.get(), decoder.get());
         decoder->finish();
     }
@@ -176,10 +184,6 @@ void TestImageStreamTranscode()
     THROW_IF_FAILED(wicFactory->CreateBitmapFromSource(pngFrameDecoder.get(), {}, &pngBitmap));
     THROW_IF_FAILED(pngBitmap->Lock(&pngRect, WICBitmapLockRead, &pngLock));
     THROW_IF_FAILED(pngLock->GetDataPointer(&pngDataSize, &pngDataPointer));
-
-    // TODO: Implement that "read through" filter that on Read passes back decrypted data from a temporary
-    // buffer, if the buffer is empty pushes more encrypted data through it. So rather than decrypting the
-    // entire thing into memory you get a reasonable-size chunking model
 }
 
 void TestDecyptionReadStream()
@@ -206,12 +210,63 @@ void TestDecyptionReadStream()
     compare_stream_content(readStream.get(), fileStream.get());
 }
 
+void TestImageDecodeStreamTranscode()
+{
+    auto wicFactory = winrt::try_create_instance<::IWICImagingFactory>(CLSID_WICImagingFactory);
+    auto pngEncryptedStream = create_mem_stream();
+
+    // Pick a file, get a frame decoder for it, and decode the first frame into a bitmap, then transcode
+    // that into a PNG, where the encoded PNG bits are streamed through the encryption writer into the
+    // memory buffer temporary.
+    {
+        wil::com_ptr<::IWICBitmapDecoder> fileDecoder;
+        wil::com_ptr<::IWICBitmapFrameDecode> frameDecode;
+        THROW_IF_FAILED(wicFactory->CreateDecoderFromFilename(GetImageFilePath().c_str(), nullptr, GENERIC_READ, WICDecodeOptions{}, &fileDecoder));
+        THROW_IF_FAILED(fileDecoder->GetFrame(0, &frameDecode));
+
+        DataProtectionProvider scuffles;
+        auto pngEncrytpedWriter = scuffles.CreateEncryptionStreamWriter(pngEncryptedStream.get());
+        wil::com_ptr<::IWICBitmapEncoder> pngEncoder;
+        THROW_IF_FAILED(wicFactory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &pngEncoder));
+        THROW_IF_FAILED(pngEncoder->Initialize(pngEncrytpedWriter.get(), WICBitmapEncoderCacheOption::WICBitmapEncoderNoCache));
+        wil::com_ptr<::IWICBitmapFrameEncode> writeFrame;
+        wil::com_ptr<::IPropertyBag2> propertyBag;
+        THROW_IF_FAILED(pngEncoder->CreateNewFrame(&writeFrame, &propertyBag));
+        THROW_IF_FAILED(writeFrame->Initialize(nullptr));
+        THROW_IF_FAILED(writeFrame->WriteSource(frameDecode.get(), nullptr));
+        THROW_IF_FAILED(writeFrame->Commit());
+        THROW_IF_FAILED(pngEncoder->Commit());
+        pngEncrytpedWriter->finish();
+    }
+
+    // Reset the encrypted stream, then wrap it in a DecryptionReadStream and create a new PNG decoder
+    // on that stream, decode the first frame, and get the frame's size.
+    {
+        wil::stream_set_position(pngEncryptedStream.get(), 0);
+        auto readStream = winrt::make_self<DecryptionReadStream>(pngEncryptedStream.get());
+        wil::com_ptr<IWICBitmapDecoder> pngDecoder;
+        wil::com_ptr<IWICBitmapFrameDecode> pngFrameDecoder;
+        wil::com_ptr<IWICBitmap> pngBitmap;
+        wil::com_ptr<IWICBitmapLock> pngLock;
+        WICRect pngRect{};
+        UINT pngDataSize = 0;
+        BYTE* pngDataPointer = nullptr;
+        THROW_IF_FAILED(wicFactory->CreateDecoderFromStream(readStream.get(), nullptr, WICDecodeOptions{}, &pngDecoder));
+        THROW_IF_FAILED(pngDecoder->GetFrame(0, &pngFrameDecoder));
+        THROW_IF_FAILED(pngFrameDecoder->GetSize(reinterpret_cast<UINT*>(&pngRect.Width), reinterpret_cast<UINT*>(&pngRect.Height)));
+        THROW_IF_FAILED(wicFactory->CreateBitmapFromSource(pngFrameDecoder.get(), {}, &pngBitmap));
+        THROW_IF_FAILED(pngBitmap->Lock(&pngRect, WICBitmapLockRead, &pngLock));
+        THROW_IF_FAILED(pngLock->GetDataPointer(&pngDataSize, &pngDataPointer));
+    }
+}
+
 int main()
 {
     init_apartment();
- 
+
     TestBufferProtection();
     TestBinaryStreamEncryption();
     TestImageStreamTranscode();
     TestDecyptionReadStream();
+    TestImageDecodeStreamTranscode();
 }
